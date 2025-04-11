@@ -659,3 +659,6 @@ relief.addModule("Utility", "ShowRange", function(Toggled)
 		end
 	end
 end)
+
+game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Relief", Text = "Discord link copied. Join for more scripts!", Duration = 5})
+setclipboard("https://discord.gg/5WyMy9n975")
