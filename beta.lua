@@ -178,7 +178,6 @@ local connections = {}
 
 local function createarrow(Target)
 	local arrow = Instance.new("Part")
-	arrow.Shape = Enum.PartType.Cylinder
 	arrow.Anchored = true
 	arrow.CanCollide = false
 	arrow.Material = Enum.Material.SmoothPlastic
@@ -226,6 +225,17 @@ local function createarrow(Target)
 	end
 
 	arrows[#arrows + 1] = DeleteArrow
+
+	local Char = GetCharacter()
+	if not Char then return end
+
+	local tChar = GetCharacter(Target)
+	if not tChar then return end
+
+	local tHum = tChar:FindFirstChildOfClass("Humanoid")
+	if not tHum then return end
+
+	connections[#connections + 1] = tHum.Died:Connect(DeleteArrow)
 
 	local Connection = RunService.Heartbeat:Connect(function()
 		local Char = GetCharacter()
@@ -285,6 +295,73 @@ relief.addModule("Render", "Arrows", function(Toggled)
 		end
 		connections = {}
     end
+end)
+
+local Resources = workspace.Resources
+local arroweggs = {}
+relief.addModule("Render", "EggEsp", function(Toggled)
+	if Toggled then
+		local function handle(obj)
+			if obj.Name == "Egg" then
+				local arrow = Instance.new("Part")
+				arrow.Anchored = true
+				arrow.CanCollide = false
+				arrow.Material = Enum.Material.SmoothPlastic
+				arrow.Parent = workspace
+				arrow.Transparency = 0.5
+				arrow.CastShadow = false
+
+				local outline = Instance.new("SelectionBox")
+				outline.Parent = arrow
+				outline.Adornee = arrow
+				outline.LineThickness = 0.01
+				outline.Color3 = Color3.new(0, 0, 0)
+				outline.SurfaceTransparency = 1
+				outline.Transparency = 0.5
+				
+				local C
+				C = RunService.Heartbeat:Connect(function()
+					if not obj then arrow:Destroy() C:Disconnect() return end
+
+					local Char = GetCharacter()
+					if not Char then return end
+
+					local Root = Char:FindFirstChild("HumanoidRootPart")
+					if not Root then return end
+
+					local tRoot = obj:FindFirstChild("Egg")
+					if not tRoot then return end
+
+					local maxDistance = 500
+
+					local distance = (Root.Position - tRoot.Position).Magnitude
+					local clamped = math.clamp(distance / maxDistance, 0, 1)
+
+					local red = Color3.fromRGB(255, 0, 0)
+					local green = Color3.fromRGB(0, 255, 0)
+					arrow.Color = red:Lerp(green, 1 - clamped)
+
+					local arrowPosition = Root.Position + (Root.Position - tRoot.Position).unit * 5
+					arrow.Size = Vector3.new(0.2, 32, 32)
+					arrow.CFrame = CFrame.new(arrowPosition, tRoot.Position) * CFrame.new(0, 0, -24)
+				end)
+
+				arroweggs[#arroweggs + 1] = {arrow, C}
+			end
+		end
+
+		for _, v in Resources:GetChildren() do
+			handle(v)
+		end
+		arroweggs[#arroweggs] = {nil, Resources.ChildAdded:Connect(handle)}
+	else
+		for _, v in arroweggs do
+			local egg, c = v[1], v[2]
+			if egg then egg:Destroy() end
+			if c then c:Disconnect() end
+		end
+		arroweggs = {}
+	end
 end)
 
 relief.addModule("Render", "ModuleList", function(Toggled)
@@ -657,6 +734,138 @@ relief.addModule("Utility", "ShowRange", function(Toggled)
 		for _, v in srhb do
 			v:Destroy()
 		end
+	end
+end)
+
+local function GetOthers()
+	local Others = {}
+	for _, Plr in Players:GetPlayers() do
+		if Plr ~= LocalPlayer then
+			table.insert(Others, Plr)
+		end
+	end
+	return Others
+end
+
+local function GetNearestPlayer()
+	local Char = GetCharacter()
+	if not Char then return end
+
+	local Root = Char:FindFirstChild("HumanoidRootPart")
+	if not Root then return end
+	
+	local Data = {nil, nil}
+	for _, Plr in GetOthers() do
+		local tChar = GetCharacter(Plr)
+		if not tChar then continue end
+
+		local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+		if not tRoot then continue end
+
+		local Distance = (Root.Position - tRoot.Position).Magnitude
+		
+		local CurrentDistance = Data[2]
+		if not CurrentDistance then
+			Data = {Plr, Distance}
+		else
+			if Distance < CurrentDistance then
+				Data = {Plr, Distance}
+			end
+		end
+	end
+	return Data
+end
+
+local function GetWeapons()
+	local Char = GetCharacter()
+	if not Char then return end
+
+	local Weapons = {}
+
+	for _, Tool in LocalPlayer.Backpack:GetChildren() do
+		if Tool.ClassName ~= "Tool" then continue end
+		
+		local ToolScripts = Tool:FindFirstChild("ToolScripts")
+		if not ToolScripts then continue end
+
+		local Remote = ToolScripts:FindFirstChild("MobileSwing")
+		if not Remote then continue end
+
+		Weapons[#Weapons + 1] = Tool
+	end
+
+	for _, Tool in Char:GetChildren() do
+		if Tool.ClassName ~= "Tool" then continue end
+		
+		local ToolScripts = Tool:FindFirstChild("ToolScripts")
+		if not ToolScripts then continue end
+
+		local Remote = ToolScripts:FindFirstChild("MobileSwing")
+		if not Remote then continue end
+
+		Weapons[#Weapons + 1] = Tool
+	end
+
+	return Weapons
+end
+
+local kac = false
+relief.addModule("Combat", "KillAura", function(Toggled)
+	if Toggled then
+		kac = true
+		local looping = false
+		while kac do
+			task.wait()
+			local Char = GetCharacter()
+			if not Char then continue end
+
+			local Root = Char:FindFirstChild("HumanoidRootPart")
+			if not Root then continue end
+
+			local Data = GetNearestPlayer()
+			local Target = Data[1]
+			if not Data or not Target then continue end
+
+			local Distance = Data[2]
+			if Distance > 10 then continue end
+
+			local tChar = GetCharacter(Target)
+			if not tChar then continue end
+
+			local tHum = tChar:FindFirstChildOfClass("Humanoid")
+			if not tHum or tHum.Health <= 0 then continue end
+
+			local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+			if not tRoot then continue end
+
+			Root.CFrame = CFrame.lookAt(Root.Position, tRoot.Position)
+
+			local Weapons = GetWeapons()
+			if not Weapons then continue end
+			
+			task.spawn(function()
+				if looping then return end
+				local oldtool = Char:FindFirstChildOfClass("Tool")
+				looping = true
+				for _, Tool in Weapons do
+					if Tool.Parent == LocalPlayer.Backpack then
+						Tool.Parent = Char
+					end
+					Tool.ToolScripts.MobileSwing:Fire()
+					wait()
+					Tool.Parent = LocalPlayer.Backpack
+				end
+				looping = false
+				if oldtool then
+					for _, Tool in Weapons do
+						Tool.Parent = LocalPlayer.Backpack
+					end
+					oldtool.Parent = Char
+				end
+			end)
+		end
+	else
+		kac = false
 	end
 end)
 
