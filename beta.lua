@@ -827,7 +827,7 @@ relief.addModule("Combat", "KillAura", function(Toggled)
 			if not Data or not Target then continue end
 
 			local Distance = Data[2]
-			if Distance > 10 then continue end
+			if Distance > 8 then continue end
 
 			local tChar = GetCharacter(Target)
 			if not tChar then continue end
