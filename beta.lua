@@ -12,19 +12,55 @@ relief.addCategory("World", "rbxassetid://17640958405")
 relief.addCategory("Utility", "rbxassetid://1538581893")
 
 local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local chars = workspace.Characters
 local regions = workspace.Regions
 local terrain = workspace.BlockTerrain
 
-local function GetCharacter(Target)
-    Target = Target or LocalPlayer
-    local Char = workspace.Characters:FindFirstChild(Target.Name)
-    return Char
+local function GetWeapons()
+	local Char = LocalPlayer.Character
+	if not Char then return end
+
+	local Weapons = {}
+
+	local function Handle(Tool)
+		if Tool.ClassName ~= "Tool" then return end
+		
+		local TS = Tool:FindFirstChild("ToolScripts")
+		if not TS then return end
+
+		local R = TS:FindFirstChild("MobileSwing")
+		if not R then return end
+
+		table.insert(Weapons, Tool)
+	end
+
+    for _, Tool in LocalPlayer.Backpack:GetChildren() do
+		Handle(Tool)
+	end
+
+	for _, Tool in Char:GetChildren() do
+		Handle(Tool)
+	end
+
+	return Weapons
+end
+
+local function GetOthers()
+	local Others = {}
+	for _, Plr in Players:GetPlayers() do
+		if Plr ~= LocalPlayer then
+			table.insert(Others, Plr)
+		end
+	end
+	return Others
 end
 
 local HealNames = {"Apple", "Cookie", "Cake"}
 
 local function FindHealTool()
-	local Char = GetCharacter()
+	local Char = LocalPlayer.Character
 	if not Char then return end
 
 	for _, Name in HealNames do
@@ -49,36 +85,46 @@ local function GetRemote(Folder, Whitelist)
 	end
 end
 
+local healing = false
 local function Heal()
 	task.spawn(function()
-		local Char = GetCharacter()
+		local Char = LocalPlayer.Character
 		if not Char then return end
 
-		local Weapon = Char:FindFirstChildOfClass("Tool")
 		local Tool = FindHealTool()
+		if not Tool then return end
 		if Char.Resources:GetAttribute("Food") < Tool.Stats:GetAttribute("FoodCost") then return end
-		Tool.Parent = Char
-
+		
 		local Remote = GetRemote(Tool.FoodScripts, {"Eat"})
-		if Remote then
-			repeat
-				Remote:FireServer()
-				task.wait()
-			until Char.Humanoid.Health == Char.Humanoid.MaxHealth
-		end
+		if not Remote then return end
 
-		Weapon.Parent = LocalPlayer.Backpack
+		healing = true
+		local Moved = {}
+		for _, t in Char:GetChildren() do
+			if t.ClassName == "Tool" and t ~= Tool then
+				t.Parent = LocalPlayer.Backpack
+				table.insert(Moved, Weapon)
+			end
+		end
+		Tool.Parent = Char
+		wait()
+		Remote:FireServer()
 		wait()
 		Tool.Parent = LocalPlayer.Backpack
+		for _, Tool in Moved do
+			if Tool then
+				Tool.Parent = Char
+			end
+		end
 		wait()
-		Weapon.Parent = Char
+		healing = false
 	end)
 end
 
 local waterspeed = false
 local isinwater = false
+local isinpond = false
 
-local rivers = {}
 for _, v in terrain:GetChildren() do
 	if v.Name == "River" then
 		v.Touched:Connect(function()
@@ -90,27 +136,45 @@ for _, v in terrain:GetChildren() do
 	end
 end
 
-local landadd = 2.5
+for _, v in terrain:GetChildren() do
+	if v.Name == "Pool" then
+		v.Touched:Connect(function()
+			isinpond = true
+		end)
+		v.TouchEnded:Connect(function()
+			isinpond = false
+		end)
+	end
+end
+
+local landadd = 2
 local wateradd = 30
 local c = {}
 relief.addModule("Movement", "Speed", function(Toggled)
     if Toggled then
-        local Char = GetCharacter()
+        local Char = LocalPlayer.Character
         local H = Char.Humanoid
 		local Old = H.WalkSpeed
 
 		local method = function()
-			local Char = GetCharacter()
+			local Char = LocalPlayer.Character
 			if not Char then return end
 
 			local H = Char:FindFirstChildOfClass("Humanoid")
 			if not H then return end
 
-			if waterspeed and isinwater then
-				H.WalkSpeed = wateradd
-			else
-				H.WalkSpeed = Old + landadd
+			if waterspeed then
+				if isinpond then
+					H.WalkSpeed = 20
+					return
+				end
+				if isinwater then
+					H.WalkSpeed = wateradd
+					return
+				end
 			end
+
+			H.WalkSpeed = Old + landadd
         end
 
 		local c1
@@ -118,7 +182,7 @@ relief.addModule("Movement", "Speed", function(Toggled)
 			c1 = RunService.Heartbeat:Connect(method)
 			c[#c+1] = c1
 
-			local Char = GetCharacter()
+			local Char = LocalPlayer.Character
 			if not Char then return end
 
 			local H = Char:FindFirstChildOfClass("Humanoid")
@@ -126,7 +190,7 @@ relief.addModule("Movement", "Speed", function(Toggled)
 
 			c[#c+1] = H:GetPropertyChangedSignal("WalkSpeed"):Connect(function()
 				local new = H.WalkSpeed
-				if new ~= Old and new ~= (Old + wateradd) and new ~= (Old + landadd) then
+				if new ~= Old and new ~= (wateradd) and new ~= (Old + landadd) then
 					Old = new
 				end
 			end)
@@ -151,9 +215,9 @@ end, {
     {
         ["Type"] = "TextBox",
         ["Title"] = "speed amount",
-        ["Placeholder"] = "speed here (2.5 default)",
+        ["Placeholder"] = "speed here (2 default)",
         ["Callback"] = function(Text)
-            landadd = tonumber(Text) or 2.5
+            landadd = tonumber(Text) or 2
         end,
     },
 	{
@@ -173,194 +237,222 @@ end, {
     },
 })
 
-local arrows = {}
-local connections = {}
+local Arrow = {}
+local Connections = {}
 
-local function createarrow(Target)
-	local arrow = Instance.new("Part")
-	arrow.Anchored = true
-	arrow.CanCollide = false
-	arrow.Material = Enum.Material.SmoothPlastic
-	arrow.Parent = workspace
-	arrow.Transparency = 0.5
-	arrow.CastShadow = false
+local ArrowScreen = Instance.new("ScreenGui")
+ArrowScreen.Parent = CoreGui
+ArrowScreen.IgnoreGuiInset = true
 
-	local outline = Instance.new("SelectionBox")
-	outline.Parent = arrow
-	outline.Adornee = arrow
-	outline.LineThickness = 0.01
-	outline.Color3 = Color3.new(0, 0, 0)
-	outline.SurfaceTransparency = 1
-	outline.Transparency = 0.5
-
-	local genre = Instance.new("BillboardGui")
-	genre.Parent = arrow
-	genre.AlwaysOnTop = true
-	genre.Size = UDim2.new(10, 0, 1, 0)
-
-	local label = Instance.new("TextLabel")
-	label.Parent = genre
-	label.Size = UDim2.new(1, 0, 1, 0)
-	label.BackgroundTransparency = 1
-	label.TextScaled = true
-	label.TextStrokeTransparency = 0
-	label.Text = Target.Name
-	label.TextColor3 = Color3.new(1, 1, 1)
-	label.Font = Enum.Font.SourceSansBold
-
+function Arrow.new(TargetPart)
 	local Connection
-	local Connection2
-	local function DeleteArrow()
-		if arrow then
-			arrow:Destroy()
-		end
-		if Connection then
+
+	local ArrowFrame = Instance.new("Frame")
+	ArrowFrame.Size = UDim2.new(0, 40, 0, 40)
+	ArrowFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+	ArrowFrame.BackgroundTransparency = 0.5
+	ArrowFrame.BorderSizePixel = 1
+	ArrowFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	ArrowFrame.Parent = ArrowScreen
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(0, 100, 0, 20)
+	Label.BackgroundTransparency = 1
+	Label.TextColor3 = Color3.new(1, 1, 1)
+	Label.Font = Enum.Font.SourceSansBold
+	Label.TextScaled = true
+	Label.Text = ""
+	Label.AnchorPoint = Vector2.new(0.5, 0.5)
+	Label.Parent = ArrowScreen
+	Label.TextStrokeTransparency = 0
+
+	local Callback
+
+	local Object = {
+		Hide = function()
+			ArrowFrame.Visible = false
+		end,
+		Show = function()
+			ArrowFrame.Visible = true
+		end,
+		Delete = function()
+			if ArrowFrame then ArrowFrame:Destroy() end
+			if Label then Label:Destroy() end
 			Connection:Disconnect()
-			Connection = nil
-		end
-		if Connection2 then
-			Connection2:Disconnect()
-			Connection2 = nil
-		end
-	end
+		end,
+		SetText = function(Text)
+			Label.Text = Text or "???"
+		end,
+		SetColor = function(Color)
+			ArrowFrame.BackgroundColor3 = Color or Color3.new(1, 1, 1)
+		end,
+		SetCallback = function(Query)
+			Callback = Query
+		end,
+	}
 
-	arrows[#arrows + 1] = DeleteArrow
+	Connection = RunService.Heartbeat:Connect(function()
+		if not TargetPart or not TargetPart:IsDescendantOf(workspace) then Object.Delete() return end
 
-	local Char = GetCharacter()
-	if not Char then return end
-
-	local tChar = GetCharacter(Target)
-	if not tChar then return end
-
-	local tHum = tChar:FindFirstChildOfClass("Humanoid")
-	if not tHum then return end
-
-	connections[#connections + 1] = tHum.Died:Connect(DeleteArrow)
-
-	local Connection = RunService.Heartbeat:Connect(function()
-		local Char = GetCharacter()
-		if not Char then return end
-
-		local tChar = GetCharacter(Target)
-		if not tChar then return end
+		local Char = LocalPlayer.Character
+		if not Char then Object.Hide() return end
 
 		local Root = Char:FindFirstChild("HumanoidRootPart")
-		if not Root then return end
+		if not Root then Object.Hide() return end
 
-		local tRoot = tChar:FindFirstChild("HumanoidRootPart")
-		if not tRoot then return end
-
-		local maxDistance = 500
-
-		local distance = (Root.Position - tRoot.Position).Magnitude
-		local clamped = math.clamp(distance / maxDistance, 0, 1)
-
-		local red = Color3.fromRGB(255, 0, 0)
-		local green = Color3.fromRGB(0, 255, 0)
-		arrow.Color = red:Lerp(green, 1 - clamped)
-
-		local arrowPosition = Root.Position + (Root.Position - tRoot.Position).unit * 5
-		arrow.Size = Vector3.new(0.2, 32, 32)
-		arrow.CFrame = CFrame.new(arrowPosition, tRoot.Position) * CFrame.new(0, 0, -24)
-	end)
-
-	local Connection2 = Players.PlayerRemoving:Connect(function(Plr)
-		if Plr == Target then
-			DeleteArrow()
+		local Value
+		if Callback then
+			Value = Callback(ArrowFrame)
 		end
+		if Value then return end
+
+		local rootScreenPos = Camera:WorldToViewportPoint(Root.Position)
+		local targetScreenPos = Camera:WorldToViewportPoint(TargetPart.Position)
+
+		local delta = targetScreenPos - rootScreenPos
+		local direction = delta.Unit
+
+		local clampedX = math.clamp(targetScreenPos.X, 10, Camera.ViewportSize.X - 10)
+		local clampedY = math.clamp(targetScreenPos.Y, 10, Camera.ViewportSize.Y - 10)
+		local clampedTargetPos = Vector2.new(clampedX, clampedY)
+
+		local displayLength = Camera.ViewportSize.Y / 3
+		local arrowStart = rootScreenPos
+		local arrowEnd = arrowStart + direction * displayLength
+		local midpoint = arrowStart + direction * (displayLength / 2)
+		local angle = math.deg(math.atan2(direction.Y, direction.X))
+
+		ArrowFrame.Position = UDim2.fromOffset(midpoint.X, midpoint.Y)
+		ArrowFrame.Size = UDim2.new(0, displayLength, 0, 4)
+		ArrowFrame.Rotation = angle
+
+		Label.Position = UDim2.fromOffset(arrowEnd.X, arrowEnd.Y)
+
+		Object.Show()
 	end)
+
+	return Object
 end
 
-local function handle(Target)
-	createarrow(Target)
-	connections[#connections + 1] = Target.CharacterAdded:Connect(function()
-		wait(0.1)
-		createarrow(Target)
-	end)
-end
-
-relief.addModule("Render", "Arrows", function(Toggled)
+local ArrowCache = {}
+relief.addModule("Render", "PlayerESP", function(Toggled)
     if Toggled then
-        for _, Target in Players:GetPlayers() do
-            if Target == LocalPlayer then continue end
-			handle(Target)
-        end
-		connections[#connections + 1] = Players.PlayerAdded:Connect(handle)
+		local function Handle(Target)
+			local function OnCharacter(Char)
+				if not Char then return end
+				local tRoot = Char:WaitForChild("HumanoidRootPart")
+
+				if not tRoot then return end
+				local Arrow = Arrow.new(tRoot)
+				Arrow.SetText(Target.Name)
+				Arrow.SetCallback(function(Frame)
+					local Root = LocalPlayer.Character.HumanoidRootPart
+					local maxDistance = 500
+					local distance = (Root.Position - tRoot.Position).Magnitude
+					local clamped = math.clamp(distance / maxDistance, 0, 1)
+					Frame.BackgroundColor3 = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), 1 - clamped)
+				end)
+				ArrowCache[#ArrowCache + 1] = Arrow
+			end
+
+			OnCharacter(Target.Character)
+			Connections[#Connections + 1] = Target.CharacterAdded:Connect(OnCharacter)
+		end
+
+        for _, Target in GetOthers() do Handle(Target) end
+		Connections[#Connections + 1] = Players.PlayerAdded:Connect(Handle)
 	else
-		for _, arrow in arrows do
-			arrow()
+		for _, Arrow in ArrowCache do
+			Arrow.Delete()
 		end
-		for _, c in connections do
-			c:Disconnect()
+		for _, C in Connections do
+			C:Disconnect()
 		end
-		connections = {}
+		Connections = {}
     end
 end)
 
+local MobList = {
+	["Cow"] = Color3.new(0, 0, 0),
+	["Polar Bear"] = Color3.new(1, 1, 1),
+	["Scorpion"] = Color3.new(1, 1, 0),
+	["Swamp Beast"] = Color3.new(1, 0, 1),
+	["Wandering Knight"] = Color3.new(0, 1, 1),
+	["Wolf"] = Color3.new(.7, .7, .7),
+	["Dire Wolf"] = Color3.new(.3, .3, .3),
+	["Yeti"] = Color3.new(0, 1, 0),
+	["Orc King"] = Color3.new(0, .7, 0),
+	["Easter Bunny"] = Color3.new(0.5, 1, 1)
+}
+
+local function GetMob(Mob)
+	for Name, Color in MobList do
+		if Mob.Name == Name then
+			return Color
+		end
+	end
+end
+
+local function GetMobs()
+	local Mobs = {}
+	for _, Mob in chars:GetChildren() do
+		local isMob = GetMob(Mob)
+		if not isMob then continue end
+		Mobs[#Mobs + 1] = Mob
+	end
+	return Mobs
+end
+
+local MobCache = {}
+local MEC
+relief.addModule("Render", "MobESP", function(Toggled)
+	if Toggled then
+		local function HandleMob(Mob)
+			local Color = GetMob(Mob)
+			if not Color then return end
+			
+			local Torso = Mob:FindFirstChild("Torso")
+			if not Torso then return end
+
+			local Arrow = Arrow.new(Torso)
+			Arrow.SetColor(Color)
+			Arrow.SetText(Mob.Name)
+			MobCache[#MobCache + 1] = Arrow
+		end
+
+		for _, Mob in chars:GetChildren() do
+			HandleMob(Mob)
+		end
+		MEC = chars.ChildAdded:Connect(HandleMob)
+	else
+		for _, Arrow in MobCache do
+			Arrow.Delete()
+		end
+		if MEC then
+			MEC:Disconnect()
+			MEC = nil
+		end
+	end
+end)
+
+local EggCache = {}
 local Resources = workspace.Resources
-local arroweggs = {}
 relief.addModule("Render", "EggEsp", function(Toggled)
 	if Toggled then
-		local function handle(obj)
-			if obj.Name == "Egg" then
-				local arrow = Instance.new("Part")
-				arrow.Anchored = true
-				arrow.CanCollide = false
-				arrow.Material = Enum.Material.SmoothPlastic
-				arrow.Parent = workspace
-				arrow.Transparency = 0.5
-				arrow.CastShadow = false
-
-				local outline = Instance.new("SelectionBox")
-				outline.Parent = arrow
-				outline.Adornee = arrow
-				outline.LineThickness = 0.01
-				outline.Color3 = Color3.new(0, 0, 0)
-				outline.SurfaceTransparency = 1
-				outline.Transparency = 0.5
-				
-				local C
-				C = RunService.Heartbeat:Connect(function()
-					if not obj then arrow:Destroy() C:Disconnect() return end
-
-					local Char = GetCharacter()
-					if not Char then return end
-
-					local Root = Char:FindFirstChild("HumanoidRootPart")
-					if not Root then return end
-
-					local tRoot = obj:FindFirstChild("Egg")
-					if not tRoot then return end
-
-					local maxDistance = 500
-
-					local distance = (Root.Position - tRoot.Position).Magnitude
-					local clamped = math.clamp(distance / maxDistance, 0, 1)
-
-					local red = Color3.fromRGB(255, 0, 0)
-					local green = Color3.fromRGB(0, 255, 0)
-					arrow.Color = red:Lerp(green, 1 - clamped)
-
-					local arrowPosition = Root.Position + (Root.Position - tRoot.Position).unit * 5
-					arrow.Size = Vector3.new(0.2, 32, 32)
-					arrow.CFrame = CFrame.new(arrowPosition, tRoot.Position) * CFrame.new(0, 0, -24)
-				end)
-
-				arroweggs[#arroweggs + 1] = {arrow, C}
+		local function Handle(Obj)
+			if Obj.Name == "Egg" then
+				local Arrow = Arrow.new(Obj.Egg)
+				Arrow.SetText("Egg")
+				EggCache[#EggCache + 1] = Arrow
 			end
 		end
 
-		for _, v in Resources:GetChildren() do
-			handle(v)
-		end
-		arroweggs[#arroweggs] = {nil, Resources.ChildAdded:Connect(handle)}
+		for _, Egg in Resources:GetChildren() do Handle(Egg) end
+		Resources.ChildAdded:Connect(Handle)
 	else
-		for _, v in arroweggs do
-			local egg, c = v[1], v[2]
-			if egg then egg:Destroy() end
-			if c then c:Disconnect() end
+		for _, Egg in EggCache do
+			Egg.Delete()
 		end
-		arroweggs = {}
 	end
 end)
 
@@ -377,7 +469,7 @@ local function handleAH(char)
 	local hum = char:WaitForChild("Humanoid")
 	ahc[#ahc + 1] = hum:GetPropertyChangedSignal("Health"):Connect(function()
 		local health = hum.Health
-		if health <= 90 then
+		if health ~= hum.MaxHealth then
 			Heal()
 		end
 	end)
@@ -385,7 +477,7 @@ end
 
 relief.addModule("Combat", "AutoHeal", function(Toggled)
     if Toggled then
-        local Char = GetCharacter()
+        local Char = LocalPlayer.Character
 		if Char then handleAH(Char) end
 		ahc[#ahc + 1] = LocalPlayer.CharacterAdded:Connect(handleAH)
 	else
@@ -396,38 +488,70 @@ relief.addModule("Combat", "AutoHeal", function(Toggled)
     end
 end)
 
+local multi = false
 local asc = false
+local oldtool
 relief.addModule("Combat", "AutoSwing", function(Toggled)
     if Toggled then
-		local Char = GetCharacter()
+		local Char = LocalPlayer.Character
 		if not Char then return end
 		
 		asc = true
 		task.spawn(function()
+			oldtool = Char:FindFirstChildOfClass("Tool")
 			while asc do
 				task.wait()
-				local Weapon = Char:FindFirstChildOfClass("Tool")
-				if not Weapon then continue end
+				if multi then
+					local Weapons = GetWeapons()
+					if not Weapons then continue end
 
-				local TS = Weapon:FindFirstChild("ToolScripts")
-				if not TS then continue end
+					for _, Weapon in Weapons do
+						if healing then
+							repeat task.wait() until not healing
+						end
+						if Weapon.Parent == LocalPlayer.Backpack then
+							Weapon.Parent = Char
+						end
+						Weapon.ToolScripts.MobileSwing:Fire()
+						wait()
+						Weapon.Parent = LocalPlayer.Backpack
+					end
+				else
+					local Weapon = Char:FindFirstChildOfClass("Tool")
+					if not Weapon then continue end
 
-				local Swing = TS:FindFirstChild("MobileSwing")
-				if not Swing then continue end
+					local TS = Weapon:FindFirstChild("ToolScripts")
+					if not TS then continue end
 
-				Swing:Fire()
+					local Swing = TS:FindFirstChild("MobileSwing")
+					if not Swing then continue end
+
+					Swing:Fire()
+				end
 			end
 		end)
 	else
 		asc = false
+		if oldtool then
+			wait()
+			oldtool.Parent = LocalPlayer.Character
+		end
     end
-end)
+end, {
+	{
+		["Type"] = "Toggle",
+		["Title"] = "MultiSwing",
+		["Callback"] = function(Toggled)
+			multi = Toggled
+		end,
+	}
+})
 
 local nc = {}
 local ncc
 relief.addModule("Movement", "Noclip", function(Toggled)
 	if Toggled then
-		local Character = GetCharacter()
+		local Character = LocalPlayer.Character
 		if not Character then return end
 
 		for _, BP in Character:GetChildren() do
@@ -437,7 +561,7 @@ relief.addModule("Movement", "Noclip", function(Toggled)
 		end
 
 		ncc = RunService.Stepped:Connect(function()
-			local Character = GetCharacter()
+			local Character = LocalPlayer.Character
 			if not Character then return end
 
 			for _, BP in Character:GetChildren() do
@@ -626,7 +750,7 @@ relief.addModule("Utility", "StatDisplay", function(Toggled)
 			task.wait(.1)
 			if not sdc then break end
 			
-			local Char = GetCharacter()
+			local Char = LocalPlayer.Character
 			if not Char then continue end
 
 			local Tool = Char:FindFirstChildOfClass("Tool")
@@ -685,9 +809,10 @@ end, {
 })
 
 local srhb = {}
+local src
 relief.addModule("Utility", "ShowRange", function(Toggled)
 	if Toggled then
-		local Char = GetCharacter()
+		local Char = LocalPlayer.Character
 		if not Char then return end
 		
 		local Root = Char:FindFirstChild("HumanoidRootPart")
@@ -725,7 +850,7 @@ relief.addModule("Utility", "ShowRange", function(Toggled)
 		local Tool = Char:FindFirstChildOfClass("Tool")
 		if Tool then Hitbox(Tool) end
 
-		Char.ChildAdded:Connect(function(Tool)
+		src = Char.ChildAdded:Connect(function(Tool)
 			if Tool:IsA("Tool") then
 				Hitbox(Tool)
 			end
@@ -734,21 +859,15 @@ relief.addModule("Utility", "ShowRange", function(Toggled)
 		for _, v in srhb do
 			v:Destroy()
 		end
+		if src then
+			src:Disconnect()
+			src = nil
+		end
 	end
 end)
 
-local function GetOthers()
-	local Others = {}
-	for _, Plr in Players:GetPlayers() do
-		if Plr ~= LocalPlayer then
-			table.insert(Others, Plr)
-		end
-	end
-	return Others
-end
-
 local function GetNearestPlayer()
-	local Char = GetCharacter()
+	local Char = LocalPlayer.Character
 	if not Char then return end
 
 	local Root = Char:FindFirstChild("HumanoidRootPart")
@@ -756,7 +875,7 @@ local function GetNearestPlayer()
 	
 	local Data = {nil, nil}
 	for _, Plr in GetOthers() do
-		local tChar = GetCharacter(Plr)
+		local tChar = Plr.Character
 		if not tChar then continue end
 
 		local tRoot = tChar:FindFirstChild("HumanoidRootPart")
@@ -776,98 +895,186 @@ local function GetNearestPlayer()
 	return Data
 end
 
-local function GetWeapons()
-	local Char = GetCharacter()
+local function GetNearestMob()
+	local Char = LocalPlayer.Character
 	if not Char then return end
 
-	local Weapons = {}
+	local Root = Char:FindFirstChild("HumanoidRootPart")
+	if not Root then return end
+	
+	local Data = {nil, nil}
+	for _, Plr in GetMobs() do
+		local tRoot = Plr:FindFirstChild("Torso")
+		if not tRoot then continue end
 
-	for _, Tool in LocalPlayer.Backpack:GetChildren() do
-		if Tool.ClassName ~= "Tool" then continue end
+		local Distance = (Root.Position - tRoot.Position).Magnitude
 		
-		local ToolScripts = Tool:FindFirstChild("ToolScripts")
-		if not ToolScripts then continue end
-
-		local Remote = ToolScripts:FindFirstChild("MobileSwing")
-		if not Remote then continue end
-
-		Weapons[#Weapons + 1] = Tool
+		local CurrentDistance = Data[2]
+		if not CurrentDistance then
+			Data = {Plr, Distance}
+		else
+			if Distance < CurrentDistance then
+				Data = {Plr, Distance}
+			end
+		end
 	end
-
-	for _, Tool in Char:GetChildren() do
-		if Tool.ClassName ~= "Tool" then continue end
-		
-		local ToolScripts = Tool:FindFirstChild("ToolScripts")
-		if not ToolScripts then continue end
-
-		local Remote = ToolScripts:FindFirstChild("MobileSwing")
-		if not Remote then continue end
-
-		Weapons[#Weapons + 1] = Tool
-	end
-
-	return Weapons
+	return Data
 end
 
+local mobaura = false
 local kac = false
+local range = 8
 relief.addModule("Combat", "KillAura", function(Toggled)
 	if Toggled then
-		kac = true
 		local looping = false
+		local oldwep = nil
+		local attacking = false
+
+		local function start()
+			if not attacking then
+				oldwep = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+			end
+			attacking = true
+		end
+
+		local function stop()
+			if attacking then
+				repeat wait() until not looping
+				if oldwep then
+					oldwep.Parent = LocalPlayer.Character
+				end
+				oldwep = nil
+			end
+			attacking = false
+		end
+
+		kac = true
 		while kac do
 			task.wait()
-			local Char = GetCharacter()
-			if not Char then continue end
+			local Char = LocalPlayer.Character
+			if not Char then attacking = false continue end
 
 			local Root = Char:FindFirstChild("HumanoidRootPart")
-			if not Root then continue end
+			if not Root then attacking = false continue end
 
-			local Data = GetNearestPlayer()
-			local Target = Data[1]
-			if not Data or not Target then continue end
-
-			local Distance = Data[2]
-			if Distance > 8 then continue end
-
-			local tChar = GetCharacter(Target)
-			if not tChar then continue end
-
-			local tHum = tChar:FindFirstChildOfClass("Humanoid")
-			if not tHum or tHum.Health <= 0 then continue end
-
-			local tRoot = tChar:FindFirstChild("HumanoidRootPart")
-			if not tRoot then continue end
-
-			Root.CFrame = CFrame.lookAt(Root.Position, tRoot.Position)
-
-			local Weapons = GetWeapons()
-			if not Weapons then continue end
-			
 			task.spawn(function()
-				if looping then return end
-				local oldtool = Char:FindFirstChildOfClass("Tool")
-				looping = true
-				for _, Tool in Weapons do
-					if Tool.Parent == LocalPlayer.Backpack then
-						Tool.Parent = Char
+				local Data = GetNearestPlayer()
+				local Target = Data[1]
+				if not Data or not Target then stop() return end
+
+				local Distance = Data[2]
+				if Distance > range then stop() return end
+
+				local tChar = Target.Character
+				if not tChar then return end
+
+				local tRoot = tChar:FindFirstChild("Torso")
+				if not tRoot then stop() return end
+
+				local tHum = tChar:FindFirstChildOfClass("Humanoid")
+				if not tHum or tHum.Health <= 0 then stop() return end
+
+				local Weapons = GetWeapons()
+				if not Weapons then stop() return end
+
+				start()
+				Root.CFrame = CFrame.lookAt(Root.Position, tRoot.Position)
+
+				task.spawn(function()
+					if looping or Weapons == {} then return end
+					looping = true
+
+					for _, Weapon in Weapons do
+						if not Weapon then continue end
+						local TS = Weapon:FindFirstChild("ToolScripts")
+						if not TS then continue end
+						local R = TS:FindFirstChild("MobileSwing")
+						if not R then continue end
+
+						if healing then
+							repeat task.wait() until not healing
+						end
+						if Weapon.Parent == LocalPlayer.Backpack then
+							Weapon.Parent = Char
+						end
+						local TS = Weapon:FindFirstChild("ToolScripts")
+						if not TS then continue end
+
+						R:Fire()
+						wait()
+						Weapon.Parent = LocalPlayer.Backpack
 					end
-					Tool.ToolScripts.MobileSwing:Fire()
-					wait()
-					Tool.Parent = LocalPlayer.Backpack
-				end
-				looping = false
-				if oldtool then
-					for _, Tool in Weapons do
-						Tool.Parent = LocalPlayer.Backpack
+					looping = false
+				end)
+			end)
+
+			task.spawn(function()
+				if not mobaura then return end
+
+				local Data = GetNearestMob()
+				local Target = Data[1]
+				if not Data or not Target then stop() return end
+
+				local Distance = Data[2]
+				if Distance > range then stop() return end
+
+				local tRoot = Target:FindFirstChild("HumanoidRootPart")
+				if not tRoot then stop() return end
+
+				local Weapons = GetWeapons()
+				if not Weapons then stop() return end
+
+				start()
+				Root.CFrame = CFrame.lookAt(Root.Position, tRoot.Position)
+
+				task.spawn(function()
+					if looping or Weapons == {} then return end
+					looping = true
+
+					for _, Weapon in Weapons do
+						if not Weapon then continue end
+						local TS = Weapon:FindFirstChild("ToolScripts")
+						if not TS then continue end
+						local R = TS:FindFirstChild("MobileSwing")
+						if not R then continue end
+
+						if healing then
+							repeat task.wait() until not healing
+						end
+						if Weapon.Parent == LocalPlayer.Backpack then
+							Weapon.Parent = Char
+						end
+						local TS = Weapon:FindFirstChild("ToolScripts")
+						if not TS then continue end
+
+						R:Fire()
+						wait()
+						Weapon.Parent = LocalPlayer.Backpack
 					end
-					oldtool.Parent = Char
-				end
+					looping = false
+				end)
 			end)
 		end
 	else
 		kac = false
 	end
-end)
+end, {
+    {
+        ["Type"] = "TextBox",
+        ["Title"] = "range",
+        ["Placeholder"] = "range here (8 default)",
+        ["Callback"] = function(Text)
+            range = tonumber(Text) or 8
+        end,
+    },
+	{
+        ["Type"] = "Toggle",
+        ["Title"] = "Attack Mobs",
+        ["Callback"] = function(Toggled)
+            mobaura = Toggled
+        end,
+    },
+})
 
 game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Relief", Text = "Discord link copied. Join for more scripts!", Duration = 5})
 setclipboard("https://discord.gg/5WyMy9n975")
