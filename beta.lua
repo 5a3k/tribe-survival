@@ -14,6 +14,8 @@ relief.addCategory("Utility", "rbxassetid://1538581893")
 local LocalPlayer = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
+local Remotes = RStorage.Remotes
+
 local chars = workspace.Characters
 local regions = workspace.Regions
 local terrain = workspace.BlockTerrain
@@ -36,7 +38,10 @@ local function GetWeapons()
 		table.insert(Weapons, Tool)
 	end
 
-    for _, Tool in LocalPlayer.Backpack:GetChildren() do
+	local Backpack = LocalPlayer.Backpack
+	if not Backpack then return end
+
+    for _, Tool in Backpack:GetChildren() do
 		Handle(Tool)
 	end
 
@@ -85,6 +90,7 @@ local function GetRemote(Folder, Whitelist)
 	end
 end
 
+local cd = 0.05
 local healing = false
 local function Heal()
 	task.spawn(function()
@@ -93,31 +99,21 @@ local function Heal()
 
 		local Tool = FindHealTool()
 		if not Tool then return end
-		if Char.Resources:GetAttribute("Food") < Tool.Stats:GetAttribute("FoodCost") then return end
+		local Resources = Char:FindFirstChild("Resources")
+		if not Resources then return end
+		if Resources:GetAttribute("Food") < Tool.Stats:GetAttribute("FoodCost") then return end
 		
 		local Remote = GetRemote(Tool.FoodScripts, {"Eat"})
 		if not Remote then return end
 
 		healing = true
-		local Moved = {}
-		for _, t in Char:GetChildren() do
-			if t.ClassName == "Tool" and t ~= Tool then
-				t.Parent = LocalPlayer.Backpack
-				table.insert(Moved, Weapon)
-			end
-		end
 		Tool.Parent = Char
 		wait()
 		Remote:FireServer()
 		wait()
 		Tool.Parent = LocalPlayer.Backpack
-		for _, Tool in Moved do
-			if Tool then
-				Tool.Parent = Char
-			end
-		end
-		wait()
 		healing = false
+		wait(cd)
 	end)
 end
 
@@ -334,6 +330,12 @@ function Arrow.new(TargetPart)
 	return Object
 end
 
+local function GetDistanceColor(Obj1, Obj2, Max)
+	local Distance = (Obj1.Position - Obj2.Position).Magnitude
+	local Limited = math.clamp(Distance / Max, 0, 1)
+	return Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), 1 - Limited)
+end
+
 local ArrowCache = {}
 relief.addModule("Render", "PlayerESP", function(Toggled)
     if Toggled then
@@ -347,10 +349,8 @@ relief.addModule("Render", "PlayerESP", function(Toggled)
 				Arrow.SetText(Target.Name)
 				Arrow.SetCallback(function(Frame)
 					local Root = LocalPlayer.Character.HumanoidRootPart
-					local maxDistance = 500
-					local distance = (Root.Position - tRoot.Position).Magnitude
-					local clamped = math.clamp(distance / maxDistance, 0, 1)
-					Frame.BackgroundColor3 = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), 1 - clamped)
+					local Color = GetDistanceColor(Root, tRoot, 500)
+					Frame.BackgroundColor3 = Color
 				end)
 				ArrowCache[#ArrowCache + 1] = Arrow
 			end
@@ -436,22 +436,35 @@ relief.addModule("Render", "MobESP", function(Toggled)
 end)
 
 local EggCache = {}
+local EEC
 local Resources = workspace.Resources
 relief.addModule("Render", "EggEsp", function(Toggled)
 	if Toggled then
 		local function Handle(Obj)
 			if Obj.Name == "Egg" then
-				local Arrow = Arrow.new(Obj.Egg)
+				local tRoot = Obj:FindFirstChild("Egg")
+				if not tRoot then return end
+
+				local Arrow = Arrow.new(tRoot)
 				Arrow.SetText("Egg")
+				Arrow.SetCallback(function(Frame)
+					local Root = LocalPlayer.Character.HumanoidRootPart
+					local Color = GetDistanceColor(Root, tRoot, 500)
+					Frame.BackgroundColor3 = Color
+				end)
 				EggCache[#EggCache + 1] = Arrow
 			end
 		end
 
 		for _, Egg in Resources:GetChildren() do Handle(Egg) end
-		Resources.ChildAdded:Connect(Handle)
+		EEC = Resources.ChildAdded:Connect(Handle)
 	else
 		for _, Egg in EggCache do
 			Egg.Delete()
+		end
+		if EEC then
+			EEC:Disconnect()
+			EEC = nil
 		end
 	end
 end)
@@ -466,10 +479,20 @@ end, {}, nil, true)
 
 local ahc = {}
 local function handleAH(char)
+	wait(0.1) -- i was having weird issues
 	local hum = char:WaitForChild("Humanoid")
-	ahc[#ahc + 1] = hum:GetPropertyChangedSignal("Health"):Connect(function()
+	ahc[#ahc + 1] = RunService.Heartbeat:Connect(function()
+		local tool = FindHealTool()
+		if not tool then return end
+
+		local stats = tool:FindFirstChild("Stats")
+		if not stats then return end
+
+		local heal = stats:GetAttribute("Heal")
+		if not heal then return end
+		
 		local health = hum.Health
-		if health ~= hum.MaxHealth then
+		if health <= (hum.MaxHealth - (heal / 2)) then
 			Heal()
 		end
 	end)
@@ -488,6 +511,7 @@ relief.addModule("Combat", "AutoHeal", function(Toggled)
     end
 end)
 
+local looping = false
 local multi = false
 local asc = false
 local oldtool
@@ -505,6 +529,7 @@ relief.addModule("Combat", "AutoSwing", function(Toggled)
 					local Weapons = GetWeapons()
 					if not Weapons then continue end
 
+					looping = true
 					for _, Weapon in Weapons do
 						if healing then
 							repeat task.wait() until not healing
@@ -516,6 +541,7 @@ relief.addModule("Combat", "AutoSwing", function(Toggled)
 						wait()
 						Weapon.Parent = LocalPlayer.Backpack
 					end
+					looping = false
 				else
 					local Weapon = Char:FindFirstChildOfClass("Tool")
 					if not Weapon then continue end
@@ -533,7 +559,7 @@ relief.addModule("Combat", "AutoSwing", function(Toggled)
 	else
 		asc = false
 		if oldtool then
-			wait()
+			repeat wait() until not looping
 			oldtool.Parent = LocalPlayer.Character
 		end
     end
@@ -832,7 +858,7 @@ relief.addModule("Utility", "ShowRange", function(Toggled)
 			HB.CanCollide = false
 			local am = Range * 2
 			HB.Size = Vector3.new(am, am, am)
-			HB.Transparency = 0.7
+			HB.Transparency = 0.9
 			HB.Material = Enum.Material.SmoothPlastic
 			HB.Name = "HB"
 			HB.Color = Color3.new(1, 0, 0)
@@ -922,6 +948,8 @@ local function GetNearestMob()
 end
 
 local mobaura = false
+local teamignore = false
+local tpbehind = false
 local kac = false
 local range = 8
 relief.addModule("Combat", "KillAura", function(Toggled)
@@ -974,10 +1002,16 @@ relief.addModule("Combat", "KillAura", function(Toggled)
 				local tHum = tChar:FindFirstChildOfClass("Humanoid")
 				if not tHum or tHum.Health <= 0 then stop() return end
 
+				if teamignore and LocalPlayer.Team and Target.Team == LocalPlayer.Team then return end
+
 				local Weapons = GetWeapons()
 				if not Weapons then stop() return end
 
 				start()
+				if tpbehind then
+					local zOffset = (tChar:GetExtentsSize().Z / 2)
+					Root.CFrame = tRoot.CFrame * CFrame.new(0, 0, zOffset)
+				end
 				Root.CFrame = CFrame.lookAt(Root.Position, tRoot.Position)
 
 				task.spawn(function()
@@ -1002,7 +1036,9 @@ relief.addModule("Combat", "KillAura", function(Toggled)
 
 						R:Fire()
 						wait()
-						Weapon.Parent = LocalPlayer.Backpack
+						if Weapon then
+							Weapon.Parent = LocalPlayer.Backpack
+						end
 					end
 					looping = false
 				end)
@@ -1017,6 +1053,9 @@ relief.addModule("Combat", "KillAura", function(Toggled)
 
 				local Distance = Data[2]
 				if Distance > range then stop() return end
+
+				local tHum = Target:FindFirstChildOfClass("Humanoid")
+				if not tHum or tHum.Health <= 0 then stop() return end
 
 				local tRoot = Target:FindFirstChild("HumanoidRootPart")
 				if not tRoot then stop() return end
@@ -1074,7 +1113,87 @@ end, {
             mobaura = Toggled
         end,
     },
+	{
+        ["Type"] = "Toggle",
+        ["Title"] = "Ignore Teammates",
+        ["Callback"] = function(Toggled)
+            teamignore = Toggled
+        end,
+    },
+	{
+        ["Type"] = "Toggle",
+        ["Title"] = "TPAura",
+        ["Callback"] = function(Toggled)
+            tpbehind = Toggled
+        end,
+    },
 })
 
+local Speed = 500
+local Vel
+local SBC
+relief.addModule("Movement", "SpinBot", function(Toggled)
+	if Toggled then
+		local function Handle(Char)
+			local Root = Char:WaitForChild("HumanoidRootPart")
+			if not Root then return end
+
+			Vel = Instance.new("BodyAngularVelocity")
+			Vel.Parent = Root
+			Vel.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+			Vel.AngularVelocity = Vector3.new(0, Speed, 0)
+		end
+
+		Handle(LocalPlayer.Character)
+		SBC = LocalPlayer.CharacterAdded:Connect(Handle)
+	else
+		if Vel then
+			Vel:Destroy()
+		end
+		if SBC then
+			SBC:Disconnect()
+			SBC = nil
+		end
+	end
+end, {
+    {
+        ["Type"] = "TextBox",
+        ["Title"] = "spin speed",
+        ["Placeholder"] = "spin speed here (500 default)",
+        ["Callback"] = function(Text)
+            Speed = tonumber(Text) or 500
+			if Vel then
+				Vel.AngularVelocity = Vector3.new(0, Speed, 0)
+			end
+        end,
+    },
+})
+
+local ARC = {}
+relief.addModule("Utility", "AutoRespawn", function(Toggled)
+	if Toggled then
+		local function Handle(Char)
+			if not Char then return end
+
+			local Hum = Char:WaitForChild("Humanoid")
+			if not Hum then return end
+			
+			ARC[#ARC + 1] = Hum.Died:Connect(function()
+				Remotes.Respawn:FireServer()
+			end)
+		end
+
+		Handle(LocalPlayer.Character)
+		ARC[#ARC + 1] = LocalPlayer.CharacterAdded:Connect(Handle)
+	else
+		for _, C in ARC do
+			C:Disconnect()
+		end
+		ARC = {}
+	end
+end)
+
+Remotes.Tribes.CreateTribe:InvokeServer("Relief v0.04\n\n")
+Remotes.Tribes.JoinTribe:FireServer("Relief v0.04\n")
 game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Relief", Text = "Discord link copied. Join for more scripts!", Duration = 5})
 setclipboard("https://discord.gg/5WyMy9n975")
