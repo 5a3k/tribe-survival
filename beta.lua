@@ -102,8 +102,11 @@ local function Heal()
 		local Resources = Char:FindFirstChild("Resources")
 		if not Resources then return end
 		if Resources:GetAttribute("Food") < Tool.Stats:GetAttribute("FoodCost") then return end
+
+		local FS = Tool:FindFirstChild("FoodScripts")
+		if not FS then return end
 		
-		local Remote = GetRemote(Tool.FoodScripts, {"Eat"})
+		local Remote = FS:FindFirstChild("Eat")
 		if not Remote then return end
 
 		healing = true
