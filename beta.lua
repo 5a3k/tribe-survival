@@ -21,21 +21,13 @@ local Details = workspace.Details
 
 local function Block(Model)
 	local Barrier = Instance.new("Part")
-	Barrier.Parent = workspace
+	Barrier.Parent = Model
 	Barrier.Size = Model:GetExtentsSize()
 	Barrier.Anchored = true
 	Barrier.Transparency = 0.5
 	Barrier.Color = Color3.new(1, 0, 0)
 	Barrier.Material = Enum.Material.SmoothPlastic
 	Barrier.CFrame = Model:GetPivot()
-
-	local Connection
-	Connection = Model.Parent.ChildRemoved:Connect(function(Object)
-		if Object == Model then
-			Barrier:Destroy()
-			Connection:Disconnect()
-		end
-	end)
 
 	return Barrier
 end
@@ -1099,3 +1091,6 @@ end, {}, nil, true)
 Relief.addModule("Utility", "KillScript", function(Toggled)
     Relief.KillScript()
 end)
+
+game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Relief", Text = "Discord link copied. Join for more scripts!", Duration = 5})
+setclipboard("https://discord.gg/5WyMy9n975")
