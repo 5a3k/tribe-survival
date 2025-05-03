@@ -21,13 +21,21 @@ local Details = workspace.Details
 
 local function Block(Model)
 	local Barrier = Instance.new("Part")
-	Barrier.Parent = Model
+	Barrier.Parent = workspace
 	Barrier.Size = Model:GetExtentsSize()
 	Barrier.Anchored = true
 	Barrier.Transparency = 0.5
 	Barrier.Color = Color3.new(1, 0, 0)
 	Barrier.Material = Enum.Material.SmoothPlastic
 	Barrier.CFrame = Model:GetPivot()
+
+	local C
+	C = Model.Parent.ChildRemoved:Connect(function(Obj)
+		if Obj == Model then
+			Barrier:Destroy()
+			C:Disconnect()
+		end
+	end)
 
 	return Barrier
 end
