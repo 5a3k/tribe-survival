@@ -1093,4 +1093,4 @@ Relief.addModule("Utility", "KillScript", function(Toggled)
 end)
 
 game:GetService("StarterGui"):SetCore("SendNotification", {Title = "Relief", Text = "Discord link copied. Join for more scripts!", Duration = 5})
-setclipboard("https://discord.gg/5WyMy9n975")
+setclipboard("https://discord.gg/WmV785v889")
